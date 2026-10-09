@@ -7,7 +7,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const adventure = AdventureRepo.getById(id);
+    const adventure = await AdventureRepo.getById(id);
     if (!adventure) return NextResponse.json({ error: 'Adventure not found' }, { status: 404 });
     return NextResponse.json(adventure);
   } catch (error: any) {

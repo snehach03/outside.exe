@@ -1,15 +1,12 @@
-import db from '@/lib/db';
+import { db } from '@/lib/db';
 import { Adventure, Mission } from '@/core/ai/ai-provider';
 
 export const AdventureRepo = {
-  create: (adventure: Omit<Adventure, 'startTime' | 'missions'>) => {
+  create: async (adventure: Omit<Adventure, 'startTime' | 'missions'>) => {
     try {
-      const stmt = db.prepare('INSERT INTO adventures (id, context, status, totalXP) VALUES (?, ?, ?, ?)');
-      stmt.run(
-        String(adventure.id),
-        JSON.stringify(adventure.context),
-        String(adventure.status),
-        Number(adventure.totalXP || 0)
+      await db.query(
+        'INSERT INTO adventures (id, context, status, totalXP) VALUES ($1, $2, $3, $4)',
+        [String(adventure.id), JSON.stringify(adventure.context), String(adventure.status), Number(adventure.totalXP || 0)]
       );
     } catch (e) {
       console.error('Repo create error:', e);
@@ -17,22 +14,24 @@ export const AdventureRepo = {
     }
   },
 
-  getById: (id: string): Adventure | null => {
+  getById: async (id: string): Promise<Adventure | null> => {
     try {
-      const adventure = db.prepare('SELECT * FROM adventures WHERE id = ?').get(String(id)) as any;
+      const advRes = await db.query('SELECT * FROM adventures WHERE id = $1', [String(id)]);
+      const adventure = advRes.rows[0];
       if (!adventure) return null;
 
-      const missions = db.prepare('SELECT * FROM missions WHERE adventureId = ?').all(String(id)) as any[];
+      const missRes = await db.query('SELECT * FROM missions WHERE adventureId = $1', [String(id)]);
+      const missions = missRes.rows;
 
       return {
         id: adventure.id,
         startTime: new Date(adventure.startTime),
-        context: JSON.parse(adventure.context),
+        context: adventure.context,
         status: adventure.status,
         totalXP: adventure.totalXP,
-        missions: missions.map(m => ({
+        missions: missions.map((m: any) => ({
           ...m,
-          isCompleted: !!m.isCompleted,
+          isCompleted: !!m.iscompleted,
         })),
       };
     } catch (e) {
@@ -41,48 +40,40 @@ export const AdventureRepo = {
     }
   },
 
-  updateStatus: (id: string, status: string, totalXP: number) => {
+  updateStatus: async (id: string, status: string, totalXP: number) => {
     try {
-      const stmt = db.prepare('UPDATE adventures SET status = ?, totalXP = ? WHERE id = ?');
-      stmt.run(String(status), Number(totalXP), String(id));
+      await db.query('UPDATE adventures SET status = $1, totalXP = $2 WHERE id = $3', [String(status), Number(totalXP), String(id)]);
     } catch (e) {
       console.error('Repo updateStatus error:', e);
       throw e;
     }
   },
 
-  saveMission: (mission: Mission, adventureId: string) => {
+  saveMission: async (mission: Mission, adventureId: string) => {
     try {
-      // Use a transaction to ensure atomic write
-      const transaction = db.transaction(() => {
-        const exists = db.prepare('SELECT 1 FROM missions WHERE id = ?').get(String(mission.id));
+      const checkRes = await db.query('SELECT 1 FROM missions WHERE id = $1', [String(mission.id)]);
 
-        if (exists) {
-          const stmt = db.prepare('UPDATE missions SET isCompleted = ?, observation = ? WHERE id = ?');
-          stmt.run(
-            mission.isCompleted ? 1 : 0,
-            mission.observation || null,
-            String(mission.id)
-          );
-        } else {
-          const stmt = db.prepare(`
-            INSERT INTO missions (id, adventureId, title, description, goal, xpReward, isCompleted, observation)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `);
-          stmt.run(
+      if (checkRes.rowCount && checkRes.rowCount > 0) {
+        await db.query(
+          'UPDATE missions SET isCompleted = $1, observation = $2 WHERE id = $3',
+          [mission.isCompleted ? true : false, mission.observation || null, String(mission.id)]
+        );
+      } else {
+        await db.query(
+          `INSERT INTO missions (id, adventureId, title, description, goal, xpReward, isCompleted, observation)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
             String(mission.id),
             String(adventureId),
             String(mission.title),
             String(mission.description),
             String(mission.goal),
             Number(mission.xpReward),
-            mission.isCompleted ? 1 : 0,
-            mission.observation || null
-          );
-        }
-      });
-
-      transaction();
+            mission.isCompleted ? true : false,
+            mission.observation || null,
+          ]
+        );
+      }
     } catch (e) {
       console.error('Repo saveMission error:', e);
       throw e;
